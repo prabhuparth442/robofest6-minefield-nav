@@ -24,3 +24,4 @@ Master-slave MAVLink architecture. Optical flow primary positioning (Matek 3901-
 
 ## Predecessor
 5.0 codebase: ../Gujcost-Robofest-Resource-IITBBS/
+# robofest6-minefield-nav
