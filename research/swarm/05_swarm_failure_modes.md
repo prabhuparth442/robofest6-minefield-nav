@@ -335,8 +335,8 @@ high and disables GUIDED mode, switching to STABILISE (manual-like) or LAND.
 
 ArduPilot EKF failsafe:
 ```
-EK3_CHECK_SCALE = 100  # Default: triggers failsafe if variance > 100 units
-FS_EKF_ACTION = 2      # Land on EKF failsafe
+FS_EKF_ACTION = 1      # 1 = Land on EKF failsafe (2 = AltHold; verify in ArduPilot docs)
+FS_EKF_THRESH = 0.8    # EKF variance threshold that triggers the failsafe (default)
 ```
 
 ### Detection and prevention
@@ -346,10 +346,12 @@ FS_EKF_ACTION = 2      # Land on EKF failsafe
 msg = master.recv_match(type='EKF_STATUS_REPORT', blocking=False)
 if msg:
     ekf_flags = msg.flags
-    if not (ekf_flags & 0x01):  # Bit 0 = velocity estimate good
-        logger.error("EKF velocity estimate bad — flow may be lost")
-    if not (ekf_flags & 0x02):  # Bit 1 = position estimate good
-        logger.error("EKF position estimate bad — may divert from strip")
+    # EKF_STATUS_FLAGS bits: 0x02 = horizontal velocity, 0x08 = horizontal position (relative),
+    # 0x10 = horizontal position (absolute; needs GPS/external nav, so it is NOT expected to be set here)
+    if not (ekf_flags & 0x02):
+        logger.error("EKF horizontal velocity bad — flow may be lost")
+    if not (ekf_flags & 0x08):
+        logger.error("EKF relative horizontal position bad — may divert from strip")
 ```
 
 ### Prevention
@@ -372,7 +374,7 @@ if msg:
 | Battery fail | Low voltage MAVLink | Broadcast + graceful land | -5 pts (partial coverage) |
 | Map disagreement | Deduplication | Max confidence wins | Minimal |
 | Human in field | Visual + loiter | Pause, warn, resume | 0 pts (delay) |
-| Nav failure (EKF) | EKF status flags | Graceful RTL | -10 to -20 pts if crash |
+| Nav failure (EKF) | EKF status flags | Hold briefly, then LAND in place (no RTL without GPS) | -10 to -20 pts if crash |
 
 ---
 
@@ -386,3 +388,5 @@ if msg:
 - [ ] Conservative path algorithm tested with partial mine maps
 - [ ] Deduplication tested with boundary-zone synthetic detections
 - [ ] Human-detection loiter tested in outdoor conditions
+
+> GPS-denied review (2026-10-24): replaced RTL with LAND for the EKF failure, and corrected the EKF failsafe parameters and status-flag bits above (please re-verify against the ArduPilot/MAVLink docs).

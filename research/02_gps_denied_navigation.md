@@ -1,27 +1,33 @@
 # 02 — GPS-Denied Navigation
 
+> **GPS-denied review (2026-10-24):** Robofest 6.0 flies GPS-denied for the whole mission. Nothing in flight may depend on a GPS fix, a 'last known GPS position', lat/lon waypoints, or GPS-based failsafes. Position comes from EKF3 (optical flow + rangefinder + compass, local NED frame). This is a legacy 5.0-era note; the sections below were corrected, but treat `gps_denied/` as the current reference.
+
 ## Why this matters for us
 
 The Robofest PS explicitly bans GPS during the 10-minute mission window. Our approach:
-origin-lock at the start position (compass + GPS fix → `origin_state.json`), then use
-pymavlink `SET_POSITION_TARGET_GLOBAL_INT` which internally uses ArduPilot EKF3 fusing barometer + optical flow
-+ compass. This works, but drift accumulates. Understanding the alternatives helps us
+lock the start heading from the compass (→ `origin_state.json`), take the arming point as local NED (0, 0, 0), and send
+local NED setpoints while ArduPilot EKF3 fuses optical flow + rangefinder/barometer + compass. This works, but drift accumulates. Understanding the alternatives helps us
 harden the system and reduce positional errors over a 60 m field.
 
 ---
 
-## Our Current Approach
+## Our Approach (corrected for GPS-denied 6.0)
 
-**Origin-lock + dead reckoning via ArduPilot EKF3:**
+> The original text of this section described the 5.0 design: a GPS fix saved to `origin_state.json`, waypoints converted to
+> GPS coordinates and sent as `SET_POSITION_TARGET_GLOBAL_INT`, and a coverage grid painted from "real GPS feedback". That
+> does not work when GPS is unavailable for the whole mission, so it was replaced.
 
-1. Pre-flight: GPS fix + compass heading averaged over 5 samples → `origin_state.json`
-2. In-flight: convert all waypoints to GPS delta from origin using `04_coordinate_math.py`
-3. ArduCopter takes GPS target coordinates, fuses barometer + accelerometer + compass internally
-4. `grid_map.py` paints coverage using *real GPS feedback* (not planned waypoints) — this
-   means GPS drift gets absorbed into the coverage map passively
+**Local-frame navigation with ArduPilot EKF3:**
 
-**Weakness:** Over 60 m of field, ArduPilot EKF3 drift at ~0.3–0.5 m/min means positional error
-at far end of the field can reach 1–2 m after 10 minutes.
+1. Pre-flight: compass heading averaged over 5 samples (circular mean) -> `origin_state.json` (heading only)
+2. Arm: EKF3 sets local NED (0, 0, 0) at the arming point
+3. In flight: all waypoints are local NED setpoints (MAVSDK `PositionNedYaw`); no lat/lon conversion exists
+4. EKF3 fuses optical flow (velocity) + rangefinder/barometer (altitude) + compass (heading)
+5. `grid_map.py` paints coverage from the EKF's local position estimate (not planned waypoints), so position drift is absorbed
+   into the coverage map passively
+
+**Weakness:** without absolute references, drift accumulates (about 0.3-0.5 m/min on EKF3 alone; less with flow). The
+mitigations are below and in `gps_denied/`.
 
 ---
 
@@ -69,7 +75,7 @@ We already use this pattern: the master drone is the reference (it holds `origin
 and the authoritative grid). Slaves operate relative to master-issued waypoints.
 
 **For Robofest 6.0:** When a slave loses its ArduPilot EKF3 position estimate (EKF diverges), the
-master can re-issue its last-known GPS position as a re-anchor command. Currently no such
+there is no GPS to fall back on, and a "last known position" from the master is just as drifted. A slave that loses its estimate should hold briefly and then LAND; re-anchoring should use absolute references (ArUco markers, Pole/Statue landmarks) rather than a remembered coordinate. Currently no such
 re-anchor command exists in `tcp_channel.py`. Worth adding as a fallback.
 
 ---
@@ -101,7 +107,7 @@ rather than also scanning. This would improve overall accuracy at the cost of on
 Our coordinate system is defined in `04_coordinate_math.py` and `fieldmap.py`:
 
 ```
-Origin:   Start GPS fix (lat0, lon0, alt0) saved in origin_state.json
+Origin:   Arming point = local NED (0, 0, 0) from EKF3; only the start heading is saved in origin_state.json
 +X axis:  East  (compass 90°)
 +Y axis:  North (compass 0°)
 +Z axis:  Up
@@ -110,15 +116,7 @@ All mine positions have NEGATIVE Y (they are South of the start line).
 Field runs: X = [-2, 32] m,  Y = [-60, 2] m
 ```
 
-The conversion math (GPS → local metres):
-```python
-# From 04_coordinate_math.py
-METERS_PER_DEG_LAT = 111_320.0
-METERS_PER_DEG_LON = 111_320.0 * cos(lat0_rad)
-
-dx = (lon - lon0) * METERS_PER_DEG_LON   # East
-dy = (lat - lat0) * METERS_PER_DEG_LAT   # North
-```
+Mine and drone positions are kept directly in this local frame; no GPS-to-metres conversion is needed.
 
 Camera intrinsics used for pixel → physical offset:
 ```
@@ -138,8 +136,8 @@ fx = (width_px / 2) / tan(hfov_rad / 2)
 | Technique | Where in code | Benefit |
 |-----------|--------------|---------|
 | Compass averaging (5 samples, circular mean) | `00_preflight_calib.py` | Accurate initial heading |
-| Passive grid from real GPS (not planned path) | `grid_map.mark_position()` | Drift-tolerant coverage map |
-| Fuzzy footprint disc (r=0.78m) | `grid_map.py` | GPS noise fills coverage gaps |
+| Passive grid from the real EKF position (not planned path) | `grid_map.mark_position()` | Drift-tolerant coverage map |
+| Fuzzy footprint disc (r=0.78m) | `grid_map.py` | Position noise fills coverage gaps |
 | Persistence gate (re-hover + 12 frames) | `03_persistence.py` | Rejects false positives from drift |
 | Mine deduplication radius 1.5 m | `05_map_verifier.py` | Fuses near-duplicate reports |
 

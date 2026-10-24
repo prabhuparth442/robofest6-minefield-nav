@@ -1,5 +1,7 @@
 # 01 — Dead Reckoning & EKF-Based Navigation
 
+> **GPS-denied review (2026-10-24):** Robofest 6.0 flies GPS-denied for the whole mission. Nothing in flight may depend on a GPS fix, a 'last known GPS position', lat/lon waypoints, or GPS-based failsafes. Position comes from EKF3 (optical flow + rangefinder + compass, local NED frame). The old GPS-averaged origin lock and `local_to_gps()` conversion were removed from this file.
+
 ## What we currently use, and why it drifts
 
 ---
@@ -129,63 +131,45 @@ SpeedyBee F405 ships with ArduCopter 4.4+ which uses EKF3 exclusively.
 
 ---
 
-## Our origin-lock strategy (what `00_preflight_calib.py` does)
+## Our origin strategy (GPS-free)
 
-Since GPS is available before we enter the field, we exploit it maximally:
+The mission is GPS-denied, so the flight code never uses a GPS fix. The origin is simply where the drone arms: EKF3 defines
+local NED (0, 0, 0) there, and every waypoint is a local NED setpoint. The only thing worth capturing before takeoff is
+**heading**, from the compass:
 
 ```python
-# Pseudo-code of origin lock sequence
-GPS_SAMPLES = 5
 COMPASS_SAMPLES = 5
 
-# 1. Collect multiple GPS fixes (reduces satellite noise)
-lat_samples, lon_samples = [], []
-for _ in range(GPS_SAMPLES):
-    fix = get_gps_fix()
-    lat_samples.append(fix.lat)
-    lon_samples.append(fix.lon)
-    time.sleep(1.0)
-
-origin_lat = mean(lat_samples)
-origin_lon = mean(lon_samples)
-
-# 2. Average compass headings using circular mean
-#    (regular average fails near 0°/360° boundary)
+# Average compass headings with a circular mean
+# (a plain average fails near 0/360 degrees)
 angles_rad = [deg_to_rad(h) for h in compass_samples]
 sin_mean = mean([sin(a) for a in angles_rad])
 cos_mean = mean([cos(a) for a in angles_rad])
 origin_heading = atan2(sin_mean, cos_mean)
 
-# 3. Save to persistent state
-save_json("origin_state.json", {
-    "lat": origin_lat,
-    "lon": origin_lon,
-    "heading_deg": rad_to_deg(origin_heading)
-})
+save_json("origin_state.json", {"heading_deg": rad_to_deg(origin_heading)})   # no lat/lon
 ```
 
-**Why circular mean for compass?** If headings are 358°, 1°, 2°, a regular average
-gives 120° — wildly wrong. Circular mean (using sin/cos) correctly gives 0.33°.
+**Why circular mean for compass?** If headings are 358, 1, 2 degrees, a regular average gives 120 degrees (wildly wrong).
+The sin/cos mean correctly gives about 0.33 degrees.
 
-### Local coordinate conversion
+### Field frame to local NED
 
-All our mine detections happen in local (X, Y) coordinates:
-- Origin = start GPS fix
-- +X = East
-- +Y = North
-- All mines are expected to have **negative Y** (field extends northward into the field
-  from our southern start position)
+Define the field frame with x along the 60 m length and y across the 15 m width, from the start point. If the field's long
+axis points along compass bearing psi (measured at start), a field point (x_f, y_f) maps to local NED (north, east) by:
 
-Converting back to GPS for ArduCopter:
 ```python
-METRES_PER_DEGREE_LAT = 111_319.0
-
-def local_to_gps(x_m, y_m, origin_lat, origin_lon):
-    """Convert local XY offset (metres) to absolute GPS."""
-    delta_lat = y_m / METRES_PER_DEGREE_LAT
-    delta_lon = x_m / (METRES_PER_DEGREE_LAT * cos(radians(origin_lat)))
-    return origin_lat + delta_lat, origin_lon + delta_lon
+north = x_f * cos(psi) - y_f * sin(psi)
+east  = x_f * sin(psi) + y_f * cos(psi)
+# send as PositionNedYaw(north, east, -altitude, yaw)
 ```
+
+Any heading error multiplies into position error (a 5 degree error at 60 m is about 5.2 m sideways), which is why compass
+calibration matters and why marker or landmark re-anchoring is valuable.
+
+**Pre-flight sanity check:** confirm on the bench or in SITL that arming, offboard/GUIDED and LAND work with GPS disabled
+and flow providing velocity. Some ArduPilot features (RTL, SmartRTL, polygon fences) assume a global home/EKF origin and
+may not behave as expected without GPS, so do not rely on them (see `swarm/03_collision_avoidance.md`).
 
 ---
 
@@ -197,7 +181,6 @@ def local_to_gps(x_m, y_m, origin_lat, origin_lon):
 | Compass disturbance from motors | Motor-off compass calibration during preflight | Keep compass away from power cables |
 | Barometer affected by prop wash | FC placed away from prop downwash | Barometric reference taken before arming |
 | Heading error multiplies XY error | Circular-mean averaging over 5 samples | Better magnetometer (external) |
-| GPS averaging limited by satellite noise | ~0.5–1 m accuracy at origin lock | DGPS or RTK for sub-10 cm origin (overkill) |
 
 ---
 

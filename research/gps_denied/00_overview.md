@@ -1,5 +1,7 @@
 # GPS-Denied Navigation — Complete Overview
 
+> **GPS-denied review (2026-10-24):** Robofest 6.0 flies GPS-denied for the whole mission. Nothing in flight may depend on a GPS fix, a 'last known GPS position', lat/lon waypoints, or GPS-based failsafes. Position comes from EKF3 (optical flow + rangefinder + compass, local NED frame). Parts 3 and 5 below were corrected in this review.
+
 ## Start here if you're new to drones or navigation
 
 ---
@@ -47,15 +49,16 @@ The central challenge of GPS-denied navigation is: **how do you stop drift?**
 |---|---|
 | 15 m × 60 m field | Moderate size — 60 m of travel in the long axis |
 | No GPS inside boundary | No satellite fix once the mission starts |
-| GPS allowed at start position | We CAN lock our origin before entering |
+| No GPS dependency at all | Treat GPS as unavailable for the whole mission, including start-up. The origin is the local NED point where the drone arms. (If the PS allows a pre-mission fix it may be logged as metadata only; flight must never require it.) |
 | 10-minute mission window | Drift must stay small over ~10 min of flight |
 | 3 drones, each ≤750 g | Every gram of sensor hardware costs something |
 | Drones fly at ~2 m altitude | Low — close to ground, good for optical sensors |
 | Outdoor environment | Wind, lighting variation, no structured features |
 
-The key insight: **we have GPS before the field, not during**. This means we can lock
-our world-coordinate origin (where we start) very precisely, and then navigate entirely
-in a local frame for the mission duration.
+The key insight: **there is no absolute reference, so everything is relative.** The origin is the local NED point where
+the drone arms (EKF3 defines it as 0,0,0), heading comes from the compass, and the drone navigates entirely in that local
+frame for the mission duration. Absolute fixes can only come from things we put or find in the field (ArUco markers, the
+Pole/Statue landmarks).
 
 ---
 
@@ -77,35 +80,35 @@ profiles. The right answer for your problem depends on your constraints.
 
 ---
 
-## Part 5 — How our system currently works
-
-Right now (Robofest 6.0, current codebase), navigation works like this:
+## Part 5 — How our system works (GPS-free)
 
 ```
-Before mission:
-  1. Drone sits at start GPS origin
-  2. We collect 5 GPS samples and average them → origin_lat, origin_lon
-  3. We do compass averaging (circular mean, 5 samples) → origin_heading
-  4. This is saved to origin_state.json
-  5. Drone enters field → GPS is now unreliable/disabled by rules
+Before mission (no GPS needed):
+  1. Drone sits at the start zone, level, motors off
+  2. Compass heading: average 5 samples with a circular mean -> origin_heading
+  3. Save {heading_deg} to origin_state.json (heading only; no lat/lon)
+  4. Arm. EKF3 defines local NED (0, 0, 0) at this point
 
 During mission:
-  6. ArduPilot EKF3 on SpeedyBee F405 fuses:
-       - Barometer (altitude)
+  5. EKF3 on the SpeedyBee F405 fuses:
+       - Optical flow (horizontal velocity)       EK3_SRC1_VELXY = 5
+       - Rangefinder / barometer (altitude)
        - Magnetometer (heading)
-       - Accelerometer + gyroscope (velocity estimation)
-  7. Our code converts local (X, Y) offsets to GPS coordinates:
-       lat = origin_lat + Y / 111,319 metres per degree
-       lon = origin_lon + X / (111,319 × cos(origin_lat))
-  8. We send these GPS targets to ArduCopter → it flies to them
-  9. EKF3 internally dead-reckons from last known position
+       - Accelerometer + gyroscope
+     with GPS disabled for position (EK3_SRC1_POSXY = 0)
+  6. Our code works in the local frame only and sends local NED setpoints
+     (MAVSDK PositionNedYaw / SET_POSITION_TARGET_LOCAL_NED). There is no lat/lon conversion.
+  7. Absolute corrections, when available, come from ArUco markers or landmarks (see 05_marker_based.md)
 ```
 
-**The known weakness:** EKF3 dead reckoning drifts ~0.3–0.5 m per minute. Over 10
-minutes at 60 m range, position error could reach 3–5 m. For a 15 m wide field, that
-is significant — a detection reported at (X=2, Y=20) could actually be at (X=4, Y=21).
+**If the position estimate degrades (flow lost, EKF variance high):** there is no "last known GPS position" to fall back on.
+The EKF's estimate is the only position the drone has, and it is drifting. The safe response is to hold briefly if the
+estimate is still usable, then LAND in place (see `swarm/05_swarm_failure_modes.md`), not to fly back to a remembered
+coordinate.
 
-The following documents explore every alternative and how to fix this.
+**The known weakness:** EKF3 dead reckoning without flow drifts ~0.3-0.5 m per minute. Over 10 minutes at 60 m range, position
+error could reach 3-5 m. For a 15 m wide field, that is significant: a detection reported at (X=2, Y=20) could actually be at
+(X=4, Y=21). The following documents explore every alternative and how to fix this.
 
 ---
 

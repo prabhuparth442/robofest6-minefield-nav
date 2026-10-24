@@ -320,7 +320,7 @@ Lua scripts can:
 | LED/servo for path marking | ✓ Simple, reliable | ✓ (more flexibility) |
 | Watchdog for comms loss | ✓ Runs even if RPi crashes | ✗ |
 
-**Recommended split:** Use Lua for safety functions (altitude floor, comms-loss RTL).
+**Recommended split:** Use Lua for safety functions (altitude floor, comms-loss LAND; RTL is avoided because GPS-denied drift makes home/position unreliable).
 Use RPi for everything else.
 
 ---
@@ -348,7 +348,7 @@ Rules that keep this stable:
 - Exactly one component sends flight commands (MAVSDK). pymavlink is used for reads and for
   parameter or message gaps.
 - Safety functions that must survive a companion-computer crash (altitude floor, comms-loss
-  RTL) still belong in ArduPilot Lua or parameters, as described in Layer 3.
+  LAND) still belong in ArduPilot Lua or parameters, as described in Layer 3.
 
 ---
 

@@ -226,7 +226,7 @@ Drone 1 ←──d12──→ Drone 2
 ```
 
 This gives relative positions accurate to ~0.15 m. Combined with initial absolute
-position from the origin lock (GPS averaged before entering field), the swarm can
+position from the shared local origin (the common takeoff point; no GPS), the swarm can
 track absolute positions for several minutes before drift accumulates.
 
 ---

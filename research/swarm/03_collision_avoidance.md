@@ -127,7 +127,7 @@ ArduPilot supports polygon fences and cylinder fences. For our strips:
 # Set a fence for Drone 1: Y = 0 to 5m, X = 0 to 60m
 # ArduPilot fence parameters (loaded at startup)
 FENCE_TYPE = 2     # Polygon
-FENCE_ACTION = 1   # RTL if breached
+FENCE_ACTION = 1   # RTL if breached (but see GPS-denied caution below)
 FENCE_MARGIN = 0.5 # 0.5m breach margin
 ```
 
@@ -138,8 +138,11 @@ def clamp_waypoint(x, y, y_min, y_max):
     return x, max(y_min, min(y_max, y))
 ```
 
-If a navigation error pushes the drone toward the boundary, the fence triggers a
-Return-To-Home (RTL), pulling the drone back to start position.
+> **GPS-denied review (2026-10-24):** do not rely on ArduPilot's hardware fence or RTL in a GPS-denied setup. Fence polygons are defined in
+> lat/lon and RTL needs a valid home and position; with no GPS, the home/EKF origin handling is unclear and the position
+> being used is the same drifting estimate that caused the breach. Verify behaviour in SITL with GPS disabled. Preferred
+> design: a **software fence in our own code**, working in local NED (clamp every waypoint to the strip and monitor the
+> pose; on breach, hold or step back inside), with LAND, not RTL, as the last-resort action.
 
 ### Complexity: Low
 Configure ArduPilot fence parameters per drone before launch.
@@ -331,7 +334,7 @@ complexity. If you're implementing ORCA, you don't need potential fields.
 
 **Layer 2 (fence, always on):**
 - ArduPilot polygon fence limits each drone to its Y strip ± 0.5 m
-- Fence breach triggers RTL
+- Fence breach: software fence in local NED first; any hardware fence action should be LAND/hold, not RTL (see caution in Proposal C)
 
 **Layer 3 (for Grand Finale, if WiFi comms works):**
 - ORCA velocity obstacle on each RPi at 10 Hz

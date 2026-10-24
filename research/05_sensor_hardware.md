@@ -6,7 +6,7 @@
 |--------|-----------|---------|--------|
 | MLX90640 | I²C @ 0x33 | 32×24 thermal IR camera | `slave/src/mlx_stdout.cpp` (C++ subprocess) |
 | TF-Luna | UART (serial) | 1D LIDAR obstacle detection | `tf_luna_failsafe.py` |
-| RPi Camera / GPS | (via ArduPilot) | pymavlink/MAVSDK flight control | `pymavlink`, `mavsdk` Python libraries |
+| RPi Camera / flight controller link | (via ArduPilot) | MAVSDK flight control + pymavlink for EKF/params | `pymavlink`, `mavsdk` Python libraries |
 
 ---
 
@@ -186,7 +186,7 @@ fy = 761.2  # pixels per metre at 1 m distance  (35° vFOV, 480 px virtual)
 body_x = (pixel_dx / fx) * ALTITUDE_M   # forward/back
 body_y = (pixel_dy / fy) * ALTITUDE_M   # left/right
 
-# Then rotate by drone heading to get NED, then add to GPS origin
+# Then rotate by drone heading to get NED, then add to the drone's local NED position (EKF3, no GPS)
 ```
 
 The 640×480 "virtual" size is because the MLX90640 frame (32×24) is upscaled ×20 for
@@ -214,3 +214,5 @@ calculation becomes 4× more precise. Downside: 5× more expensive.
 
 Resolution 320×256 at 60 Hz — significantly better but ~₹80,000+. Overkill for Robofest
 budget constraints but the reference standard in professional mine-detection research.
+
+> GPS-denied review (2026-10-24): removed GPS-origin references in the pixel-to-ground section above.

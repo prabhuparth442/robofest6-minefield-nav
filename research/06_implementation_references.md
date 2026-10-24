@@ -1,5 +1,7 @@
 # 06 — Implementation References
 
+> **GPS-denied review (2026-10-24):** Robofest 6.0 flies GPS-denied for the whole mission. Nothing in flight may depend on a GPS fix, a 'last known GPS position', lat/lon waypoints, or GPS-based failsafes. Position comes from EKF3 (optical flow + rangefinder + compass, local NED frame). GPS-based API calls and parameters in this file were corrected; MAVSDK is the primary flight API (see `code_architecture/00_ros2_vs_mavlink.md`).
+
 Quick-reference for every external tool, SDK, and library the system depends on.
 Use this when setting up a new drone from scratch or when something breaks.
 
@@ -19,15 +21,15 @@ Use this when setting up a new drone from scratch or when something breaks.
 | `drone.action.arm()` | `main_orchestrator_competition.py` | Arm motors |
 | `drone.action.takeoff()` | same | Altitude hold takeoff |
 | `drone.action.land()` | same | Controlled landing |
-| `drone.offboard.set_position_global()` / `goto_location()` | same | Fly to GPS coordinate |
-| `drone.telemetry.position()` | `udp_channel.py` | Subscribe to GPS position stream |
+| `drone.offboard.set_position_ned()` | same | Fly to a local NED setpoint (GPS-denied: do not use `goto_location()` or global setpoints) |
+| `drone.telemetry.position_velocity_ned()` | `udp_channel.py` | Subscribe to the EKF local position/velocity stream |
 | `drone.telemetry.heading()` | `00_preflight_calib.py` | Get compass heading |
 | `drone.telemetry.in_air()` | `main_orchestrator_competition.py` | Check airborne status |
 | `drone.telemetry.battery()` | telemetry | Battery voltage monitoring |
 
 ### Offboard mode
 
-MAVSDK requires the drone to be in **offboard mode** before `goto_location()` works.
+MAVSDK requires the drone to be in **offboard mode** (GUIDED on ArduCopter) before `set_position_ned()` setpoints take effect.
 Our code enables this automatically — but if ArduPilot rejects GUIDED mode, check:
 1. RC is in a position that allows GUIDED mode (set MODE switch or use Mission Planner)
 2. SITL is running (for testing) or real flight controller connected
@@ -49,7 +51,7 @@ MAVSDK connects to `udp://:14540` — this is the default in our code.
 | `ConnectionError: no heartbeat received` | MAVProxy not running, or wrong port |
 | `ActionError: command denied` | Drone not in correct flight mode; check RC override |
 | `OffboardError: rejected` | Send at least 1 setpoint before enabling offboard mode |
-| `TelemetryError: no GPS fix` | Wait for GPS lock; do not arm indoors without SITL |
+| Arm refused / position pre-arm failures | Do not wait for a GPS lock. Check that EKF3 has a horizontal position from optical flow (`gps_denied/02_optical_flow.md`) and that GPS pre-arm checks are configured for a GPS-free setup |
 
 ---
 
@@ -61,7 +63,7 @@ MAVSDK connects to `udp://:14540` — this is the default in our code.
 ### GUIDED mode rules (ArduCopter)
 
 - ArduCopter must receive setpoints at >2 Hz in GUIDED mode or it will hold position
-- Our code sends waypoints sequentially — if `goto_location()` awaits completion (>500 ms
+- Our code sends waypoints sequentially — if the setpoint call awaits completion (>500 ms
   between waypoints), the drone may stop responding to waypoints mid-flight
 - **Fix:** Call `a velocity keep-alive MAVLink message via pymavlink` as a keep-alive if waypoint dwell is long
 
@@ -69,11 +71,12 @@ MAVSDK connects to `udp://:14540` — this is the default in our code.
 
 | Parameter | Recommended | Purpose |
 |-----------|-------------|---------|
-| `FS_THR_ENABLE` | 1 (RTL) | RC failsafe action on signal loss |
-| `EK3_SRC1_POSXY` | 3 (GPS) | Which sensors EKF3 uses for XY position |
+| `FS_THR_ENABLE` | 3 (Land; verify in ArduPilot docs) | RC failsafe action on signal loss. Avoid RTL: it needs a trustworthy home/position, which a GPS-denied drone lacks |
+| `EK3_SRC1_POSXY` | 0 (None; no GPS) | Which sensors EKF3 uses for XY position |
+| `EK3_SRC1_VELXY` | 5 (Optical flow) | Horizontal velocity source in GPS-denied flight |
 | `WPNAV_SPEED` | 300 cm/s | Max horizontal speed in GUIDED/AUTO mode |
 | `LAND_SPEED` | 50 cm/s | Descent rate during landing |
-| `RTL_ALT` | 300 cm | Return-to-launch altitude above home (cm) |
+| `RTL_ALT` | 300 cm | Only relevant if RTL is ever used; not part of the GPS-denied plan |
 | `GUID_TIMEOUT` | 3.0 s | GUIDED mode target timeout |
 
 ---

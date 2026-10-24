@@ -102,7 +102,7 @@ The software stack spans two processors:
 │                                                                  │
 │  EKF3: fuses IMU + Optical Flow + Barometer + Compass           │
 │  GUIDED mode: accepts position/velocity targets from RPi         │
-│  Lua scripts: altitude floor, comms-loss RTL, kill switch        │
+│  Lua scripts: altitude floor, comms-loss LAND, kill switch       │
 │  Outputs: 4× ESC PWM, servo (chalk/LED), buzzer                 │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -364,7 +364,7 @@ class CommsNode(Node):
 
 ### Comms loss watchdog (Lua on SpeedyBee)
 
-ArduPilot Lua runs even if the RPi crashes. This script implements RTL on comms loss:
+ArduPilot Lua runs even if the RPi crashes. This script implements LAND on comms loss (not RTL: RTL needs a trustworthy home/position, which a GPS-denied drone does not have):
 
 ```lua
 -- scripts/comms_watchdog.lua
@@ -375,8 +375,8 @@ local function update()
     -- Check if companion computer is sending heartbeats
     local now = millis()
     if now - last_heartbeat > HEARTBEAT_TIMEOUT_MS then
-        gcs:send_text(4, "Companion comms lost — RTL")
-        vehicle:set_mode(vehicle.MODE_RTL)
+        gcs:send_text(4, "Companion comms lost — LAND")
+        vehicle:set_mode(9)   -- 9 = LAND on ArduCopter
     end
     return update, 500  -- check every 500 ms
 end
@@ -390,7 +390,7 @@ return update()
 ```
 
 > **Caution:** this script is a sketch. `heartbeat_received()` is never connected to actual MAVLink
-> reception, so as written `last_heartbeat` is never updated and the script would trigger RTL
+> reception, so as written `last_heartbeat` is never updated and the script would trigger LAND
 > about 5 seconds after start. Wire it to the AP_Scripting MAVLink receive API, decide which
 > message/component counts as the companion heartbeat (MAVSDK's server also sends heartbeats),
 > and test in SITL before relying on it.
@@ -407,6 +407,7 @@ master.mav.heartbeat_send(
 ### Altitude floor (Lua)
 
 > Untested sketch: confirm that the Lua binding used below exists for your ArduCopter version and behaves as intended in SITL.
+> GPS-denied review (2026-10-24): `ahrs:get_position()` returns a global (lat/lon) location that does not exist without GPS/an EKF origin. Use the downward rangefinder (height above ground) instead.
 
 Prevents the drone from descending below 1.0 m (safety margin above mines/person):
 
