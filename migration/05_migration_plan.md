@@ -1,5 +1,10 @@
 # 05 — Step-by-Step Migration Plan
 
+> **Project decision (Robofest 6.0): MAVSDK-Python is the primary flight API, with pymavlink
+> as a secondary channel and MAVProxy as the router. MAVROS is rejected, and ROS 2 is not part
+> of the core flight stack.** See `research/code_architecture/00_ros2_vs_mavlink.md` for the
+> reasons. **This plan is not scheduled for 6.0.** Phase 2 ("Replace MAVSDK flight commands") contradicts the decision; if the migration ever happens, do it as Approach A and keep MAVSDK for flight. Also note that the snippets use **5.0-era values** (for example `delta_t_low=0.15`, `delta_t_high=1.25`, and GPS-based coordinates). Those thresholds are the `HOT_MAX` bug that filters out surface mines, and 6.0 is GPS-denied, so do not copy them.
+
 ## Overview
 
 Migrating from MAVSDK scripts to ROS2 is a significant change. This plan breaks it into

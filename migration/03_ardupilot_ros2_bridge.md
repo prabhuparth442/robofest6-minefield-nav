@@ -1,5 +1,10 @@
 # 03 — ArduPilot ↔ ROS2 Bridge Setup (AP_DDS)
 
+> **Project decision (Robofest 6.0): MAVSDK-Python is the primary flight API, with pymavlink
+> as a secondary channel and MAVProxy as the router. MAVROS is rejected, and ROS 2 is not part
+> of the core flight stack.** See `research/code_architecture/00_ros2_vs_mavlink.md` for the
+> reasons. AP_DDS is documented here for future work only. **Check topic names before using any snippet:** several examples use `/fmu/in/...` and `/fmu/out/...`, which are PX4-style names; ArduPilot's AP_DDS publishes under `/ap/...` (as `00_ros2_vs_mavlink.md` lists). Verify against the ArduPilot ROS 2 docs for your firmware version.
+
 ## What is AP_DDS (ArduPilot DDS bridge)?
 
 AP_DDS (ArduPilot DDS bridge) (micro eXtremely Resource Constrained Environments DDS) is the official bridge

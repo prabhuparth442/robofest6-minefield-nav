@@ -1,5 +1,10 @@
 # 01 — ROS2 Concepts for Beginners
 
+> **Project decision (Robofest 6.0): MAVSDK-Python is the primary flight API, with pymavlink
+> as a secondary channel and MAVProxy as the router. MAVROS is rejected, and ROS 2 is not part
+> of the core flight stack.** See `research/code_architecture/00_ros2_vs_mavlink.md` for the
+> reasons. This file is background reading on ROS 2, not a task for 6.0.
+
 If you've never used ROS2 before, this is the right place to start.
 We'll explain every concept by comparing it to something in our current codebase.
 

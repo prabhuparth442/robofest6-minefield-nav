@@ -1,6 +1,70 @@
-# 00 — ROS 2 vs MAVLink vs pymavlink
+# 00 — ROS 2 vs MAVSDK vs MAVLink (pymavlink / MAVROS)
 
 ## When to use each, and why
+
+---
+
+## Decision status (read this first)
+
+> **Chosen for Robofest 6.0: MAVSDK-Python as the primary flight API, pymavlink as a
+> secondary channel for ArduPilot-specific gaps, MAVProxy as the MAVLink router.
+> MAVROS is rejected. ROS 2 is optional and not part of the core flight stack.**
+
+This file was first written as a general survey and originally assumed a ROS 2 node graph
+with a pymavlink bridge. That layout is kept below as the **alternative architecture**, because
+the reasoning is still useful if the project ever adds VIO (which is ROS-heavy). The sections
+marked *(chosen)*, *(secondary)*, *(rejected)* and *(not chosen)* show where each option landed.
+
+### Why MAVSDK is the primary API here
+
+1. **It is async-native, and the whole codebase is asyncio.** MAVSDK-Python exposes
+   `await drone.action.arm()`, `async for pos in drone.telemetry.position()`, and so on. That
+   drops straight into the asyncio architecture (thermal reader, detection, comms, mission
+   state machine all as coroutines). pymavlink is blocking and callback/poll based; ROS 2
+   brings its own executor and callback model that has to be bridged to asyncio with threads.
+2. **Small memory footprint on a Pi 4 (4 GB).** MAVSDK costs roughly 60-80 MB of RAM
+   (a thin Python wrapper plus the `mavsdk_server` process). MAVROS costs roughly 550-750 MB,
+   plus the ROS 2 runtime, on a board that is also running YOLO/NCNN inference, thermal
+   processing, Flask and Vosk.
+3. **The frame convention matches our code.** Our local coordinates are NED, the same as
+   ArduPilot's local frame and MAVSDK's `PositionNedYaw` offboard setpoints. MAVROS publishes
+   ENU following the ROS convention (REP-103), which means silent X/Y swaps and Z sign flips at
+   every boundary. In a GPS-denied system where mine positions depend on getting the frame right,
+   a hidden conversion layer is a bug source we do not want.
+4. **Small API surface, fast to rewrite around.** The team is small and a full codebase rewrite
+   is planned. `arm`, `offboard`/GUIDED setpoints, telemetry streams and `land` cover most of
+   what flight code needs, with no workspace, colcon build or launch-file layer to maintain.
+5. **MAVROS fit with ArduPilot/EKF3 is weaker than with PX4.** MAVROS support for the
+   ArduPilot + EKF3 + optical-flow path has gaps, and debugging them through a ROS bridge adds a
+   layer between us and the flight controller.
+
+### Why pymavlink stays as a secondary channel
+
+MAVSDK is designed around PX4 and covers only part of ArduPilot. Things MAVSDK does not
+expose well on ArduPilot, such as EKF3 status/health (`EKF_STATUS_REPORT`) and some parameter
+and message-level work, go through pymavlink on a second MAVProxy UDP output. MAVProxy routes
+the same MAVLink stream to both. This is a gap-filler, not a second flight controller: only
+MAVSDK sends flight commands.
+
+### Why ROS 2 is not in the core stack
+
+ROS 2's strengths (topic decoupling, rosbag replay, ready-made packages) matter most with many
+independent nodes or with ROS-native perception stacks. For a small team on a Pi 4 with one
+asyncio process per drone, the cost (RAM, build/launch overhead, the asyncio bridge) outweighs
+the benefit. It becomes worth revisiting only if VIO (OpenVINS/VINS) is added, since those
+stacks are ROS-native; in that case ROS 2 would sit beside the flight code with a one-way
+bridge (see the Alternative section at the bottom), not replace MAVSDK.
+
+### Quick comparison
+
+| | MAVSDK-Python | pymavlink | MAVROS 2 | AP_DDS / ROS 2 |
+|---|---|---|---|---|
+| Role here | **Primary (chosen)** | Secondary | Rejected | Not chosen |
+| asyncio fit | Native | Blocking, needs executor | Needs thread bridging | Needs thread bridging |
+| RAM on Pi 4 | ~60-80 MB | Negligible | ~550-750 MB | ROS 2 runtime + DDS agent |
+| Frame | NED (matches ArduPilot) | NED (raw MAVLink) | ENU (conversion needed) | ROS REP-103 conventions |
+| ArduPilot coverage | Partial (PX4-centric) | Complete (raw messages) | Gaps with EKF3/flow | Newer, firmware-dependent |
+| Best for | Arm, offboard/GUIDED, telemetry, land | EKF health, params, custom messages | ROS-native pipelines | Pure-ROS 2 stacks |
 
 ---
 
@@ -101,9 +165,9 @@ MAVLink is NOT a general-purpose ROS 2 protocol. It's specific to flight control
 | `OPTICAL_FLOW` | FC → RPi | Optical flow sensor readings |
 | `HEARTBEAT` | Both | Alive signal — if missing for >1s, failsafe triggers |
 
-### The three MAVLink interface options
+### The four MAVLink interface options
 
-**Option 1: pymavlink (current approach)**
+**Option 1: pymavlink (secondary: gap filler)**
 
 Direct Python library. Most flexible, lowest level:
 
@@ -132,7 +196,52 @@ When to use pymavlink:
 - For simple scripts and testing
 - When you don't need topic-based pub/sub from multiple consumers
 
-**Option 2: MAVROS 2**
+**Option 2: MAVSDK-Python (chosen: primary flight API)**
+
+An async Python wrapper over a `mavsdk_server` process that speaks MAVLink to the flight
+controller. On ArduPilot, MAVSDK's `offboard` plugin sends position/velocity setpoints that
+ArduPilot handles in GUIDED mode.
+
+```python
+import asyncio
+from mavsdk import System
+from mavsdk.offboard import PositionNedYaw
+
+async def fly():
+    drone = System()
+    await drone.connect(system_address="udp://:14540")   # MAVProxy output
+
+    async for state in drone.core.connection_state():
+        if state.is_connected:
+            break
+
+    # Follow the project's arm-and-offboard sequence (see technical-learnings):
+    # validate EKF health, send a zero-offset hold setpoint, then arm and start offboard,
+    # so the NED origin is not reset by a mode transition.
+    await drone.offboard.set_position_ned(PositionNedYaw(0.0, 0.0, 0.0, 0.0))
+    await drone.action.arm()
+    await drone.offboard.start()
+    await asyncio.sleep(2.0)                               # stabilisation
+
+    # NED: x = North, y = East, z = Down (so -2.0 = 2 m up)
+    await drone.offboard.set_position_ned(PositionNedYaw(10.0, 0.0, -2.0, 0.0))
+
+asyncio.run(fly())
+```
+
+When to use MAVSDK (this is our default):
+- Arming, mode/offboard control, position and velocity setpoints, landing
+- Telemetry streams (position, attitude, battery, in-air state) consumed as async generators
+- Anywhere the code is already asyncio
+
+Limits to know about:
+- Built around PX4, so some ArduPilot behaviours need workarounds (for example, the NED origin
+  can reset on an AUTO to GUIDED transition; avoid `action.takeoff()` and use the hold-setpoint
+  sequence above)
+- EKF3 health and parameter-level work are not covered well: use pymavlink for those
+- Setpoints must keep streaming; ArduCopter holds position if GUIDED targets stop arriving
+
+**Option 3: MAVROS 2 (rejected for this project)**
 
 A ROS 2 package that bridges MAVLink to ROS 2 topics. MAVROS publishes ArduPilot
 telemetry as standard ROS 2 topics:
@@ -152,12 +261,12 @@ pose_sub = node.create_subscription(PoseStamped, '/mavros/local_position/pose',
 pose_pub = node.create_publisher(PoseStamped, '/mavros/setpoint_position/local', 10)
 ```
 
-When to use MAVROS 2:
+When MAVROS 2 would make sense (not our case; see Decision status for why we rejected it):
 - When your mission logic is already in ROS 2 and needs to access flight state
 - When you want multiple ROS 2 nodes to consume drone telemetry (map node, detection
   node, logging node — all subscribe to the same topic without competing for serial port)
 
-**Option 3: AP_DDS (native ROS 2 from ArduPilot)**
+**Option 4: AP_DDS (native ROS 2 from ArduPilot, not chosen)**
 
 ArduPilot 4.5+ has built-in Micro XRCE-DDS support (library: AP_DDS). This allows
 ArduPilot to publish/subscribe ROS 2 topics **without** any bridge software on the RPi.
@@ -216,7 +325,40 @@ Use RPi for everything else.
 
 ---
 
-## Recommended integration for Robofest 6.0
+## Chosen architecture for Robofest 6.0 (MAVSDK-first, single asyncio process)
+
+```
+RPi 4B (4 GB), one asyncio process per drone
+│
+├── thermal_task      → MLX90640 reader (blocking pipe read via run_in_executor) → asyncio.Queue
+├── detection_task    → RGB + thermal detectors, confidence fusion, persistence filter
+├── map_task          → local NED grid, mine list, exclusion zones
+├── mission_task      → state machine: SCAN -> AGGREGATE -> GUIDE
+├── comms_task        → inter-drone UDP/TCP (WiFi), heartbeats, mine reports
+├── flight (MAVSDK)   → arm, offboard setpoints, telemetry streams, land   [only sender of flight commands]
+└── ardupilot_aux     → pymavlink on 2nd MAVProxy UDP output: EKF3 health, params, extra messages [read/aux only]
+
+SpeedyBee F405 (ArduCopter) <-- serial --> MAVProxy (router) --> UDP :14540 MAVSDK
+                                                           --> UDP :14550-style out for pymavlink
+```
+
+Rules that keep this stable:
+- Blocking I/O and heavy numpy work go through `run_in_executor` and `asyncio.Queue`, so the
+  event loop (and therefore the GUIDED setpoint stream) never stalls.
+- Exactly one component sends flight commands (MAVSDK). pymavlink is used for reads and for
+  parameter or message gaps.
+- Safety functions that must survive a companion-computer crash (altitude floor, comms-loss
+  RTL) still belong in ArduPilot Lua or parameters, as described in Layer 3.
+
+---
+
+## Alternative: ROS 2-based integration (not chosen)
+
+The layout below was the original recommendation of this file. It is retained for reference and
+for a possible future VIO add-on. If ROS 2 is ever added, keep MAVSDK as the flight path and use
+ROS 2 only for perception data, with a one-way bridge, rather than routing flight control
+through ROS.
+
 
 ```
 RPi 4B running Ubuntu 22.04 + ROS 2 Humble
@@ -285,3 +427,9 @@ class MAVLinkBridge(Node):
 
 5. AP_DDS XRCE-DDS guide (Raspberry Pi 4):
    https://discuss.ardupilot.org/t/guide-for-using-dds-over-ppp-with-a-raspberry-pi-4-companion-computer/126128
+
+6. MAVSDK-Python documentation (primary flight API):
+   https://mavsdk.mavlink.io/main/en/python/
+
+7. ArduPilot GUIDED mode (what MAVSDK offboard maps to on ArduCopter):
+   https://ardupilot.org/copter/docs/ac2_guidedmode.html

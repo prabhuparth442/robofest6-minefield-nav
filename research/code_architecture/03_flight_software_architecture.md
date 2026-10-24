@@ -4,7 +4,72 @@
 
 ---
 
-## Overview
+## Decision status (read this first)
+
+> **Project decision (Robofest 6.0): MAVSDK-Python is the primary flight API, with pymavlink
+> as a secondary channel and MAVProxy as the router. MAVROS is rejected, and ROS 2 is not part
+> of the core flight stack.** See `research/code_architecture/00_ros2_vs_mavlink.md` for the
+> reasons. The ROS 2 node design in this file is kept as the **alternative architecture** (useful if VIO is ever added). The section directly below shows how the same modules map onto the chosen design.
+
+### Chosen design: the same modules as asyncio tasks in one process per drone
+
+| ROS 2 node (alternative below) | Chosen implementation |
+|---|---|
+| `camera_node` | `camera_task`: picamera2 capture loop, frames pushed to an `asyncio.Queue` |
+| `thermal_node` | `thermal_task`: reads the existing C++ `mlx_stdout` pipe via `run_in_executor` |
+| `detection_node` | `detection_task`: consumes both queues, heavy CPU work in an executor |
+| `map_node` | `map_task`: grid + A* over in-memory NumPy arrays |
+| `mission_node` | `mission_task`: the same state machine, written as `async` code |
+| `mavlink_bridge_node` | **MAVSDK** (flight commands + telemetry) + pymavlink on a 2nd MAVProxy output (EKF3 health, params) |
+| `comms_node` | `comms_task`: asyncio UDP/TCP sockets for swarm traffic |
+| ROS 2 topics | `asyncio.Queue` / shared state object |
+
+```python
+# Sketch only (untested): the shape of the chosen design.
+import asyncio, numpy as np
+from mavsdk import System
+from mavsdk.offboard import PositionNedYaw
+
+TOL = 0.4  # m, waypoint arrival tolerance
+
+class State:
+    pose = (0.0, 0.0, 0.0)          # NED metres, updated by pose_task
+
+async def thermal_task(proc, out_q: asyncio.Queue):
+    loop = asyncio.get_running_loop()
+    while True:
+        # blocking pipe read must not run on the event loop (it would stall setpoints)
+        raw = await loop.run_in_executor(None, proc.stdout.read, 768 * 4)
+        await out_q.put(np.frombuffer(raw, dtype=np.float32).reshape(24, 32))
+
+async def pose_task(drone: System, state: State):
+    async for pv in drone.telemetry.position_velocity_ned():
+        state.pose = (pv.position.north_m, pv.position.east_m, pv.position.down_m)
+
+async def goto(drone: System, state: State, n, e, d):
+    # ArduCopter holds position if GUIDED targets stop arriving, so keep re-sending
+    while (sum((a - b) ** 2 for a, b in zip(state.pose, (n, e, d))) ** 0.5) > TOL:
+        await drone.offboard.set_position_ned(PositionNedYaw(n, e, d, 0.0))
+        await asyncio.sleep(0.2)
+
+async def mission_task(drone: System, state: State, waypoints):
+    for n, e, d in waypoints:       # SCAN state
+        await goto(drone, state, n, e, d)
+    # AGGREGATE -> GUIDE -> LAND follow the same pattern
+
+async def main(drone, proc, waypoints):
+    state, q = State(), asyncio.Queue(maxsize=4)
+    await asyncio.gather(
+        thermal_task(proc, q), pose_task(drone, state),
+        mission_task(drone, state, waypoints),
+        # detection_task, map_task, comms_task, ardupilot_aux (pymavlink) ...
+    )
+```
+
+---
+
+## Overview (ROS 2 alternative design, not chosen)
+
 
 The software stack spans two processors:
 
@@ -44,7 +109,7 @@ The software stack spans two processors:
 
 ---
 
-## ROS 2 node details
+## ROS 2 node details (alternative design, not chosen)
 
 ### 1. camera_node
 
@@ -324,6 +389,12 @@ end
 return update()
 ```
 
+> **Caution:** this script is a sketch. `heartbeat_received()` is never connected to actual MAVLink
+> reception, so as written `last_heartbeat` is never updated and the script would trigger RTL
+> about 5 seconds after start. Wire it to the AP_Scripting MAVLink receive API, decide which
+> message/component counts as the companion heartbeat (MAVSDK's server also sends heartbeats),
+> and test in SITL before relying on it.
+
 The RPi sends a heartbeat every 1 second via pymavlink:
 ```python
 master.mav.heartbeat_send(
@@ -334,6 +405,8 @@ master.mav.heartbeat_send(
 ```
 
 ### Altitude floor (Lua)
+
+> Untested sketch: confirm that the Lua binding used below exists for your ArduCopter version and behaves as intended in SITL.
 
 Prevents the drone from descending below 1.0 m (safety margin above mines/person):
 

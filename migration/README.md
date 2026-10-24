@@ -1,5 +1,10 @@
 # Migration Guide — ArduPilot/pymavlink → ROS2
 
+> **Project decision (Robofest 6.0): MAVSDK-Python is the primary flight API, with pymavlink
+> as a secondary channel and MAVProxy as the router. MAVROS is rejected, and ROS 2 is not part
+> of the core flight stack.** See `research/code_architecture/00_ros2_vs_mavlink.md` for the
+> reasons. Everything in this folder is a **future-work option (Robofest 7.0+)**, not the plan for 6.0. If it is ever pursued, keep MAVSDK as the flight path (Approach A in `02_mavsdk_to_ros2.md`) rather than replacing it.
+
 ## What is this folder?
 
 This folder explains how to migrate our current drone system (built on MAVSDK + direct

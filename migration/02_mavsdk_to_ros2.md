@@ -1,5 +1,10 @@
 # 02 — MAVSDK Code → ROS2 Equivalent Code
 
+> **Project decision (Robofest 6.0): MAVSDK-Python is the primary flight API, with pymavlink
+> as a secondary channel and MAVProxy as the router. MAVROS is rejected, and ROS 2 is not part
+> of the core flight stack.** See `research/code_architecture/00_ros2_vs_mavlink.md` for the
+> reasons. **Approach A (wrap MAVSDK inside a ROS 2 node) is the only approach compatible with this decision.** Approach B (native `ardupilot_msgs`/AP_DDS replacing MAVSDK) is an option for 7.0+ only.
+
 This file shows our exact MAVSDK code alongside the ROS2 equivalent, section by section.
 You don't need to delete MAVSDK — you can wrap it inside a ROS2 node as a transition step.
 
