@@ -5,7 +5,8 @@ organised by topic for the 2026 Aerial Robotics: Minefield Navigation team.
 
 Every document is a **digest** — enough to understand the idea, know where to look deeper,
 and connect the paper's findings to our actual codebase. Full PDFs are available at the
-arxiv / DOI links inside each file.
+arxiv / DOI links inside each file. Papers already downloaded into this folder are also
+linked locally (📄) in the bibliography below.
 
 ---
 
@@ -36,11 +37,14 @@ arxiv / DOI links inside each file.
 
 ### GPS-Denied Navigation
 
-5. **[arXiv:2409.10193]** Anonymous. (2024). *Relative Positioning for Aerial Robot Path Planning in GPS Denied Environment*. arXiv. https://arxiv.org/abs/2409.10193
+5. **[arXiv:2409.10193]** Anonymous. (2024). *Relative Positioning for Aerial Robot Path Planning in GPS Denied Environment*. arXiv. https://arxiv.org/abs/2409.10193  
+   📄 Local PDF: [Relative Positioning for Aerial Robot.pdf](<Relative Positioning for Aerial Robot.pdf>)
 
-6. **[PMC7256583]** Anonymous. (2020). *Autonomous Navigation for Drone Swarms in GPS-Denied Environments Using Structured Learning*. PMC. https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7256583/
+6. **[PMC7256583]** Anonymous. (2020). *Autonomous Navigation for Drone Swarms in GPS-Denied Environments Using Structured Learning*. PMC. https://www.ncbi.nlm.nih.gov/pmc/articles/PMC7256583/  
+   📄 Local PDF: [Autonomous Navigation for Drone Swarm in GPS-Denied Environment using Structured Learning.pdf](<Autonomous Navigation for Drone Swarm in GPS-Denied Environment using Structured Learning.pdf>)
 
-7. **[Drones 9(6):442, 2025]** Anonymous. *UAV Autonomous Navigation System Based on Air-Ground Collaboration in GPS-Denied Environments*. MDPI Drones. https://www.mdpi.com/2504-446X/9/6/442
+7. **[Drones 9(6):442, 2025]** Anonymous. *UAV Autonomous Navigation System Based on Air-Ground Collaboration in GPS-Denied Environments*. MDPI Drones. https://www.mdpi.com/2504-446X/9/6/442  
+   📄 Local PDF: [UAV Autonomous Navigation System Based on Air–Ground Collaboration in GPS-Denied Environments.pdf](<UAV Autonomous Navigation System Based on Air–Ground Collaboration in GPS-Denied Environments.pdf>)
 
 ### Swarm Coordination
 
